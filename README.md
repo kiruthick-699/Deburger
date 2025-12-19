@@ -92,7 +92,46 @@ npm run lint
 
 ## Configuration
 
-The extension will require an OpenAI API key for AI explanations. Configuration details to be added in future releases.
+The extension integrates with LLM APIs for AI-powered explanations. Configuration details to be added in future releases.
+
+### AI API Integration
+
+**Important Notes on API Usage:**
+
+The extension includes an LLM client placeholder that can be connected to OpenAI, Anthropic Claude, or other LLM services for generating issue explanations. Before enabling live API calls, be aware of:
+
+#### Cost Considerations
+- Each issue explanation requires one API call
+- Large projects with many issues can accumulate significant costs quickly
+- Implement request batching and caching strategies to minimize API calls
+- Always monitor your API usage and set spending limits with your provider
+- Consider local/self-hosted LLM alternatives for cost-sensitive environments
+
+#### Rate Limits
+- Most LLM APIs enforce rate limits (tokens/minute, requests/minute)
+- Implement exponential backoff and retry logic for rate-limited requests
+- Queue analysis requests if working with large codebases
+- Cache explanations to avoid re-requesting the same issues
+
+#### Security & Privacy
+- **Never hardcode API keys** - use environment variables only
+- API requests will send code context to external services
+- Review your organization's data policies before enabling API integration
+- Consider on-premises LLM solutions for sensitive codebases
+- Mask or redact sensitive information in issue explanations
+
+#### LLM Client Implementation
+The `src/ai/llmClient.ts` module provides:
+- Prompt template that explicitly forbids code generation
+- Configurable endpoint support (OpenAI, Claude, local LLMs)
+- Structure for implementing your preferred LLM provider
+- Currently a placeholder; no live API calls are made
+
+To enable live API calls:
+1. Update `callLLMAPI()` in `src/ai/llmClient.ts` with your provider's API client
+2. Set `LLM_API_KEY` and `LLM_ENDPOINT` environment variables
+3. Implement rate-limiting and error handling
+4. Test thoroughly with a small project first
 
 ## Roadmap
 
