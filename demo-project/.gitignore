@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+*.js
+*.js.map
+!jest.config.js
+!.eslintrc.js
+
+# IDE
+.DS_Store

@@ -1,0 +1,16 @@
+{
+  "name": "demo-project",
+  "version": "1.0.0",
+  "description": "Demo project with intentional code issues for AI Debugging Assistant",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "lodash": "^4.17.21"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}
