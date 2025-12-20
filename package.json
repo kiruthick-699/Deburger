@@ -17,7 +17,36 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": []
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ai-debugger-sidebar",
+          "title": "AI Debugger",
+          "icon": "$(debug)"
+        }
+      ]
+    },
+    "views": {
+      "ai-debugger-sidebar": [
+        {
+          "id": "ai-debugger.issues",
+          "name": "Issues",
+          "when": "workbenchState != empty"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ai-debugger.runScan",
+        "title": "Run AI Debugging Analysis",
+        "category": "AI Debugger"
+      },
+      {
+        "command": "ai-debugger.explainIssue",
+        "title": "Explain This Issue",
+        "category": "AI Debugger"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
