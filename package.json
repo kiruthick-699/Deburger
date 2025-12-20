@@ -46,7 +46,31 @@
         "title": "Explain This Issue",
         "category": "AI Debugger"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "AI Debugging Assistant",
+      "properties": {
+        "aiDebugger.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for LLM integration (e.g., OpenAI). Keep this secret and never commit to version control.",
+          "markdownDescription": "API key for LLM integration (e.g., OpenAI). **WARNING**: Keep this secret and never commit to version control. Store only in VS Code user settings, not in .vscode/settings.json",
+          "scope": "machine-overridable"
+        },
+        "aiDebugger.enableTelemetry": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable anonymous telemetry to improve the extension (opt-out by setting to false)",
+          "scope": "window"
+        },
+        "aiDebugger.analyzeOnSave": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically run analysis when files are saved",
+          "scope": "window"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
@@ -54,7 +78,9 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "jest",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "package": "vsce package --no-dependencies",
+    "package:pre": "npm run compile && npm test && npm run lint"
   },
   "devDependencies": {
     "@babel/parser": "^7.28.5",
@@ -65,6 +91,7 @@
     "@types/vscode": "^1.85.0",
     "@typescript-eslint/eslint-plugin": "^6.16.0",
     "@typescript-eslint/parser": "^6.16.0",
+    "@vscode/vsce": "^3.7.1",
     "eslint": "^8.56.0",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.1",

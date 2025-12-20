@@ -92,7 +92,46 @@ npm run lint
 
 ## Configuration
 
-The extension integrates with LLM APIs for AI-powered explanations. Configuration details to be added in future releases.
+### API Key Setup
+
+The extension requires an LLM API key for AI-powered explanations. Configure it in VS Code settings:
+
+1. Open Settings (Cmd+, on macOS, Ctrl+, on Windows/Linux)
+2. Search for "AI Debugger"
+3. Set your API key in `aiDebugger.apiKey`
+
+**⚠️ SECURITY WARNING:**
+- **NEVER** commit your API key to version control
+- Store the key in **User Settings** (`~/Library/Application Support/Code/User/settings.json` on macOS)
+- **DO NOT** store it in Workspace Settings (`.vscode/settings.json`)
+- Treat your API key like a password
+- Rotate keys immediately if exposed
+
+### Privacy Notice
+
+**What gets sent to the LLM API:**
+- File names and paths from your project
+- Code snippets around detected issues
+- Issue descriptions and metadata
+- Project dependency information
+
+**What does NOT get sent:**
+- Your entire codebase
+- Environment variables or secrets
+- Git history or commit messages
+- Personal identifiable information (unless in code comments)
+
+**Recommendations:**
+- Review your organization's data policies before use
+- Consider self-hosted LLM solutions for sensitive codebases
+- Use the extension only on non-proprietary code if uncertain
+- Disable API integration by removing the API key when not needed
+
+### Additional Settings
+
+- `aiDebugger.enableTelemetry` - Enable/disable anonymous usage telemetry (default: `true`)
+  - Set to `false` to opt out of anonymous usage data collection
+- `aiDebugger.analyzeOnSave` - Run analysis automatically when files are saved (default: `false`)
 
 ### AI API Integration
 

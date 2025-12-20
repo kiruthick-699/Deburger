@@ -1,0 +1,11 @@
+.vscode/**
+.github/**
+src/**
+.gitignore
+.eslintrc.js
+tsconfig.json
+jest.config.js
+*.test.ts
+__fixtures__
+**/*.test.js
+**/*.test.js.map

@@ -6,6 +6,7 @@ import { explainIssue } from './ai/llmClient';
 import { AIDebuggerTreeProvider } from './ui/aiSidebar';
 import { ExplanationPanel } from './ui/explanationPanel';
 import { DiagnosticsManager } from './ui/diagnosticsManager';
+import { ConfigManager } from './core/configManager';
 import { AnalysisIssue } from './core/types';
 
 let treeProvider: AIDebuggerTreeProvider;
@@ -35,6 +36,18 @@ export async function activate(context: vscode.ExtensionContext) {
 	const explainCommand = vscode.commands.registerCommand(
 		'ai-debugger.explainIssue',
 		async (issue: AnalysisIssue) => {
+			// Check if API key is configured before attempting to explain
+			const isConfigured = await ConfigManager.isApiKeyConfigured();
+			if (!isConfigured) {
+				const message =
+					'API key not configured. Configure it in extension settings to use AI explanations.';
+				const action = await vscode.window.showWarningMessage(message, 'Open Settings');
+				if (action === 'Open Settings') {
+					await ConfigManager.openApiKeySettings();
+				}
+				return;
+			}
+
 			// Show explanation panel with mocked explanation
 			ExplanationPanel.createOrShow(context, issue, null);
 		}
@@ -44,7 +57,18 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Dispose diagnostics manager on deactivation
 	context.subscriptions.push(diagnosticsManager);
 
+	// Optional: Prompt for API key on first activation (comment out to disable)
+	// await ConfigManager.promptForApiKeyIfNeeded();
+
 	console.log('AI Debugger commands registered');
+
+	// Future telemetry placeholder
+	// const isTelemetryOptedOut = await ConfigManager.isTelemetryOptedOut();
+	// if (!isTelemetryOptedOut) {
+	//   // Send telemetry about extension activation
+	//   // Example: track activation, analysis runs, issues found
+	//   // Never track actual code content or file names
+	// }
 }
 
 /**
@@ -113,3 +137,4 @@ export function deactivate() {
 	console.log('AI Debugging Assistant is deactivated');
 	diagnosticsManager?.dispose();
 }
+
