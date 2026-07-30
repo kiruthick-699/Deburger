@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { scanProject } from './core/projectScanner';
 import { analyzeFiles } from './core/analyzer';
-import { buildContext } from './core/contextBuilder';
+import { buildContext, formatContextForPrompt } from './core/contextBuilder';
 import { explainIssue } from './ai/llmClient';
 import { AIDebuggerTreeProvider } from './ui/aiSidebar';
 import { ExplanationPanel } from './ui/explanationPanel';
@@ -11,6 +11,7 @@ import { AnalysisIssue } from './core/types';
 
 let treeProvider: AIDebuggerTreeProvider;
 let diagnosticsManager: DiagnosticsManager;
+let lastContextSummary = 'No project-wide analysis context is available yet.';
 
 /**
  * This method is called when your extension is activated
@@ -28,7 +29,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
 	// Register "Run Scan" command
 	const runScanCommand = vscode.commands.registerCommand('ai-debugger.runScan', async () => {
-		await runAnalysis(context);
+		await runAnalysis();
 	});
 	context.subscriptions.push(runScanCommand);
 
@@ -48,8 +49,29 @@ export async function activate(context: vscode.ExtensionContext) {
 				return;
 			}
 
-			// Show explanation panel with mocked explanation
-			ExplanationPanel.createOrShow(context, issue, null);
+			ExplanationPanel.createOrShow(context, issue, 'loading');
+
+			try {
+				const apiKey = await ConfigManager.getApiKey();
+				if (!apiKey) {
+					throw new Error('API key not configured');
+				}
+				const provider = await ConfigManager.getProvider();
+				const model = await ConfigManager.getModel();
+
+				const explanation = await explainIssue(issue, lastContextSummary, apiKey, {
+					provider,
+					model,
+				});
+
+				ExplanationPanel.createOrShow(context, issue, explanation);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				vscode.window.showWarningMessage(
+					`AI explanation failed (${message}). Showing fallback guidance instead.`
+				);
+				ExplanationPanel.createOrShow(context, issue, null);
+			}
 		}
 	);
 	context.subscriptions.push(explainCommand);
@@ -74,7 +96,7 @@ export async function activate(context: vscode.ExtensionContext) {
 /**
  * Run the analysis pipeline: scan -> analyze -> build context -> populate UI.
  */
-async function runAnalysis(context: vscode.ExtensionContext): Promise<void> {
+async function runAnalysis(): Promise<void> {
 	const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
 	if (!workspaceFolder) {
 		vscode.window.showErrorMessage('No workspace folder open');
@@ -101,7 +123,8 @@ async function runAnalysis(context: vscode.ExtensionContext): Promise<void> {
 				progress.report({ increment: 30, message: `Found ${issues.length} issues` });
 
 				// Step 3: Build context
-				const contextSummary = await buildContext(scannedFiles, issues, workspaceFolder.uri.fsPath);
+				const projectContext = await buildContext(scannedFiles, issues, workspaceFolder.uri.fsPath);
+				lastContextSummary = formatContextForPrompt(projectContext);
 				progress.report({ increment: 30, message: 'Building context summary...' });
 
 				// Step 4: Update UI

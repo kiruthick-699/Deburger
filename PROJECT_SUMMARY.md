@@ -33,9 +33,10 @@
   - Structured for consistency
   
 - **LLM Client** (`llmClient.ts`)
-  - `explainIssue()` function (placeholder HTTP client)
+  - `explainIssue()` calls the real OpenAI or Anthropic HTTP API (provider selected via settings)
   - Prompt builder with context injection
-  - Returns `{ issue, explanation }` structure
+  - Returns `{ issue, explanation, remediationSteps, model }` structure
+  - Falls back to a locally-generated explanation in the UI if the API call fails
 
 ### 3. User Interface
 - **Sidebar TreeView** (`aiSidebar.ts`)
@@ -176,7 +177,8 @@ debuggerr/
 8. `feat: add API key config, integration tests, packaging` ← CURRENT
 
 ## Future Roadmap
-- [ ] Live LLM API integration (currently mocked)
+- [x] Live LLM API integration (OpenAI, Anthropic)
+- [ ] Local LLM support (Ollama, LM Studio)
 - [ ] Custom rule configuration UI
 - [ ] Support for Python, Java, Go
 - [ ] Performance optimization (incremental analysis)

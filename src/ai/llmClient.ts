@@ -1,3 +1,4 @@
+import * as https from 'https';
 import { AnalysisIssue } from '../core/types';
 import { EXPLAIN_ISSUE_PROMPT } from './promptTemplates';
 
@@ -15,42 +16,59 @@ export interface LLMExplainResult {
 	};
 }
 
+export type LLMProvider = 'openai' | 'anthropic';
+
 /**
  * Configuration for LLM API client.
  */
 export interface LLMClientConfig {
 	apiKey: string;
-	endpoint: string;
+	provider?: LLMProvider;
+	endpoint?: string;
 	model?: string;
 	timeout?: number;
 }
 
+const DEFAULT_MODELS: Record<LLMProvider, string> = {
+	openai: 'gpt-4o-mini',
+	anthropic: 'claude-haiku-4-5-20251001',
+};
+
+const DEFAULT_ENDPOINTS: Record<LLMProvider, string> = {
+	openai: 'https://api.openai.com/v1/chat/completions',
+	anthropic: 'https://api.anthropic.com/v1/messages',
+};
+
+const DEFAULT_TIMEOUT_MS = 30000;
+const MAX_RESPONSE_TOKENS = 700;
+
 /**
- * Placeholder HTTP client for calling an LLM API.
- * This is a template that can be connected to OpenAI, Claude, or other LLM services.
- *
- * NOTE: No actual API calls are made in the current implementation.
- * This serves as the integration point for future API implementations.
- * Cost and rate-limiting must be considered before enabling live API calls.
+ * Calls the configured LLM provider to explain a static analysis issue.
+ * Supports OpenAI's chat completions API and Anthropic's messages API.
  */
 export async function explainIssue(
 	issue: AnalysisIssue,
 	contextSummary: string,
-	apiKeyPlaceholder: string
+	apiKey: string,
+	config?: Partial<Omit<LLMClientConfig, 'apiKey'>>
 ): Promise<LLMExplainResult> {
 	// Build the prompt by replacing template variables
 	const prompt = buildPrompt(issue, contextSummary);
 
-	// Placeholder for HTTP client implementation
-	// In production, this would call an actual LLM endpoint:
-	// - OpenAI: https://api.openai.com/v1/chat/completions
-	// - Anthropic Claude: https://api.anthropic.com/v1/messages
-	// - Local LLM: http://localhost:port/v1/completions
+	const provider: LLMProvider = config?.provider ?? 'openai';
+	const resolvedConfig: Required<LLMClientConfig> = {
+		apiKey,
+		provider,
+		model: config?.model || DEFAULT_MODELS[provider],
+		endpoint: config?.endpoint || DEFAULT_ENDPOINTS[provider],
+		timeout: config?.timeout ?? DEFAULT_TIMEOUT_MS,
+	};
 
-	const response = await callLLMAPI(prompt, apiKeyPlaceholder);
+	const response = await callLLMAPI(prompt, resolvedConfig);
 
 	// Parse the response into structured format
 	const result = parseResponse(issue, response);
+	result.model = resolvedConfig.model;
 
 	return result;
 }
@@ -67,56 +85,122 @@ export function buildPrompt(issue: AnalysisIssue, contextSummary: string): strin
 }
 
 /**
- * Placeholder for HTTP client call to LLM endpoint.
- * Returns mock response in tests; in production would call real endpoint.
+ * Calls the real LLM HTTP endpoint (OpenAI or Anthropic) and extracts the text response.
  *
  * IMPORTANT: API key security
  * - Never log or expose API keys in error messages
- * - Use environment variables for actual keys
- * - Implement rate-limiting to avoid excessive costs
- * - Consider request batching for efficiency
+ * - Never include the API key or full prompt in thrown errors
  */
-async function callLLMAPI(prompt: string, apiKey: string): Promise<string> {
-	// TODO: Implement actual HTTP client
-	// Example structure:
-	// const response = await fetch(endpoint, {
-	//   method: 'POST',
-	//   headers: {
-	//     'Authorization': `Bearer ${apiKey}`,
-	//     'Content-Type': 'application/json',
-	//   },
-	//   body: JSON.stringify({ prompt, max_tokens: 500 }),
-	//   timeout: 30000,
-	// });
-	//
-	// if (!response.ok) {
-	//   throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
-	// }
-	//
-	// const data = await response.json();
-	// return data.choices[0].text;
+async function callLLMAPI(prompt: string, config: Required<LLMClientConfig>): Promise<string> {
+	const isAnthropic = config.provider === 'anthropic';
 
-	// Placeholder: Return empty string (tests will mock this)
-	return '';
+	const body = JSON.stringify({
+		model: config.model,
+		max_tokens: MAX_RESPONSE_TOKENS,
+		messages: [{ role: 'user', content: prompt }],
+	});
+
+	const headers: Record<string, string> = isAnthropic
+		? {
+				'x-api-key': config.apiKey,
+				'anthropic-version': '2023-06-01',
+				'content-type': 'application/json',
+			}
+		: {
+				authorization: `Bearer ${config.apiKey}`,
+				'content-type': 'application/json',
+			};
+
+	const data = await postJson(config.endpoint, headers, body, config.timeout);
+
+	if (isAnthropic) {
+		const anthropicData = data as AnthropicResponse;
+		return anthropicData?.content?.[0]?.text ?? '';
+	}
+	const openaiData = data as OpenAIResponse;
+	return openaiData?.choices?.[0]?.message?.content ?? '';
+}
+
+interface OpenAIResponse {
+	choices?: { message?: { content?: string } }[];
+}
+
+interface AnthropicResponse {
+	content?: { text?: string }[];
+}
+
+/**
+ * Minimal HTTPS JSON POST client (no external dependencies).
+ */
+function postJson(
+	url: string,
+	headers: Record<string, string>,
+	body: string,
+	timeoutMs: number
+): Promise<unknown> {
+	return new Promise((resolve, reject) => {
+		let target: URL;
+		try {
+			target = new URL(url);
+		} catch {
+			reject(new Error('Invalid LLM API endpoint configured'));
+			return;
+		}
+
+		const req = https.request(
+			{
+				hostname: target.hostname,
+				path: `${target.pathname}${target.search}`,
+				method: 'POST',
+				headers: { ...headers, 'content-length': Buffer.byteLength(body) },
+				timeout: timeoutMs,
+			},
+			res => {
+				let raw = '';
+				res.on('data', chunk => (raw += chunk));
+				res.on('end', () => {
+					const status = res.statusCode ?? 0;
+					if (status < 200 || status >= 300) {
+						reject(new Error(`LLM API request failed with status ${status}`));
+						return;
+					}
+					try {
+						resolve(JSON.parse(raw));
+					} catch {
+						reject(new Error('Failed to parse LLM API response'));
+					}
+				});
+			}
+		);
+
+		req.on('timeout', () => {
+			req.destroy(new Error('LLM API request timed out'));
+		});
+		req.on('error', () => {
+			reject(new Error('LLM API request failed. Check your network connection.'));
+		});
+
+		req.write(body);
+		req.end();
+	});
 }
 
 /**
  * Parse LLM response into structured explanation and remediation steps.
+ * Tolerates a few common list formats: "1)", "1.", "-", "*".
  */
 function parseResponse(issue: AnalysisIssue, response: string): LLMExplainResult {
-	// Extract plain-text explanation and numbered steps
 	const lines = response.split('\n').filter(line => line.trim().length > 0);
 
-	// Simple parsing: look for numbered items as remediation steps
 	const remediationSteps: string[] = [];
 	let explanation = '';
 
 	for (const line of lines) {
-		// Match numbered steps: "1)", "2)", etc.
-		const stepMatch = line.match(/^\d+\)\s+(.+)/);
+		const trimmed = line.trim();
+		const stepMatch = trimmed.match(/^(?:\d+[).]|[-*])\s+(.+)/);
 		if (stepMatch) {
 			remediationSteps.push(stepMatch[1]);
-		} else if (!line.match(/^Constraints:/i)) {
+		} else if (!/^Constraints:/i.test(trimmed)) {
 			explanation += line + '\n';
 		}
 	}
@@ -125,7 +209,6 @@ function parseResponse(issue: AnalysisIssue, response: string): LLMExplainResult
 		issue,
 		explanation: explanation.trim(),
 		remediationSteps,
-		model: 'placeholder',
 		tokenUsage: {
 			promptTokens: 0,
 			completionTokens: 0,

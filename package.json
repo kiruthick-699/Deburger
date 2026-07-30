@@ -63,6 +63,19 @@
           "description": "Enable anonymous telemetry to improve the extension (opt-out by setting to false)",
           "scope": "window"
         },
+        "aiDebugger.provider": {
+          "type": "string",
+          "enum": ["openai", "anthropic"],
+          "default": "openai",
+          "description": "LLM provider to use for AI-powered explanations.",
+          "scope": "window"
+        },
+        "aiDebugger.model": {
+          "type": "string",
+          "default": "",
+          "description": "Optional model override for the selected provider (e.g. gpt-4o-mini, claude-haiku-4-5-20251001). Leave empty to use the provider's default.",
+          "scope": "window"
+        },
         "aiDebugger.analyzeOnSave": {
           "type": "boolean",
           "default": false,

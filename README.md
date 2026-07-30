@@ -259,10 +259,14 @@ The extension requires an LLM API key for AI-powered explanations. Configure it 
 ```json
 {
   "aiDebugger.apiKey": "sk-your-api-key-here",
+  "aiDebugger.provider": "openai",
+  "aiDebugger.model": "",
   "aiDebugger.enableTelemetry": false,
   "aiDebugger.analyzeOnSave": false
 }
 ```
+
+`aiDebugger.provider` selects the LLM backend (`openai` or `anthropic`); `aiDebugger.model` optionally overrides the default model for that provider (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`).
 
 **⚠️ SECURITY WARNING:**
 - **NEVER** commit your API key to version control
@@ -274,7 +278,9 @@ The extension requires an LLM API key for AI-powered explanations. Configure it 
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `aiDebugger.apiKey` | string | `""` | LLM API key (OpenAI, etc.) |
+| `aiDebugger.apiKey` | string | `""` | LLM API key (OpenAI or Anthropic) |
+| `aiDebugger.provider` | string | `"openai"` | LLM provider: `openai` or `anthropic` |
+| `aiDebugger.model` | string | `""` | Optional model override for the provider |
 | `aiDebugger.enableTelemetry` | boolean | `true` | Anonymous usage telemetry (opt-out) |
 | `aiDebugger.analyzeOnSave` | boolean | `false` | Auto-run analysis on file save |
 
@@ -363,9 +369,9 @@ npm test -- --watch
    - No support for Python, Java, Go, etc. (yet)
    - Limited TypeScript-specific analysis
 
-2. **No Live LLM Integration**
-   - Explanation feature uses mock responses
-   - Requires manual LLM API client implementation
+2. **Live LLM Integration**
+   - Explanations call the real OpenAI or Anthropic API using your configured key
+   - Falls back to a locally-generated (non-AI) explanation if the API call fails
 
 3. **Basic Rule Set**
    - Only 4 rules currently implemented
@@ -386,7 +392,8 @@ See [Roadmap](#roadmap) below for upcoming features.
 ## 🗺️ Roadmap
 
 ### Short-term (Next Release)
-- [ ] Live LLM API integration (OpenAI, Anthropic, local)
+- [x] Live LLM API integration (OpenAI, Anthropic)
+- [ ] Local LLM support (Ollama, LM Studio)
 - [ ] Caching for LLM responses
 - [ ] Incremental analysis (only changed files)
 - [ ] Custom rule configuration UI

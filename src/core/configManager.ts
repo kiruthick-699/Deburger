@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { LLMProvider } from '../ai/llmClient';
 
 /**
  * Securely manages LLM API configuration.
@@ -8,6 +9,8 @@ export class ConfigManager {
 	private static readonly CONFIG_KEY = 'aiDebugger';
 	private static readonly API_KEY_SETTING = 'apiKey';
 	private static readonly TELEMETRY_SETTING = 'enableTelemetry';
+	private static readonly PROVIDER_SETTING = 'provider';
+	private static readonly MODEL_SETTING = 'model';
 
 	/**
 	 * Get the stored API key from extension settings.
@@ -71,6 +74,24 @@ export class ConfigManager {
 		} catch (error) {
 			return false;
 		}
+	}
+
+	/**
+	 * Get the configured LLM provider. Defaults to 'openai'.
+	 */
+	static async getProvider(): Promise<LLMProvider> {
+		const config = vscode.workspace.getConfiguration(this.CONFIG_KEY);
+		const provider = config.get<string>(this.PROVIDER_SETTING, 'openai');
+		return provider === 'anthropic' ? 'anthropic' : 'openai';
+	}
+
+	/**
+	 * Get the user-configured model override, if any.
+	 */
+	static async getModel(): Promise<string | undefined> {
+		const config = vscode.workspace.getConfiguration(this.CONFIG_KEY);
+		const model = config.get<string>(this.MODEL_SETTING);
+		return model && model.trim().length > 0 ? model : undefined;
 	}
 
 	/**

@@ -25,7 +25,7 @@ export class ExplanationPanel {
 	public static createOrShow(
 		context: vscode.ExtensionContext,
 		issue: AnalysisIssue,
-		explanation: LLMExplainResult | null
+		explanation: LLMExplainResult | null | 'loading'
 	): void {
 		const column = vscode.ViewColumn.Two;
 
@@ -51,7 +51,7 @@ export class ExplanationPanel {
 	/**
 	 * Update the panel with new explanation content.
 	 */
-	private update(issue: AnalysisIssue, explanation: LLMExplainResult | null): void {
+	private update(issue: AnalysisIssue, explanation: LLMExplainResult | null | 'loading'): void {
 		const html = this.getWebviewContent(issue, explanation);
 		this.panel.webview.html = html;
 		this.panel.title = `Explain: ${issue.ruleId}`;
@@ -60,9 +60,54 @@ export class ExplanationPanel {
 	/**
 	 * Generate HTML content for the webview panel.
 	 */
-	private getWebviewContent(issue: AnalysisIssue, explanation: LLMExplainResult | null): string {
+	private getWebviewContent(
+		issue: AnalysisIssue,
+		explanation: LLMExplainResult | null | 'loading'
+	): string {
 		const severityColor = this.getSeverityColor(issue.severity);
 		const severityLabel = issue.severity.toUpperCase();
+
+		if (explanation === 'loading') {
+			return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>Issue Explanation</title>
+	<style>
+		body {
+			font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+			color: var(--vscode-foreground);
+			background-color: var(--vscode-editor-background);
+			padding: 16px;
+		}
+		.header { display: flex; align-items: center; margin-bottom: 20px; gap: 12px; }
+		.severity-badge {
+			background-color: ${severityColor};
+			color: white;
+			padding: 4px 12px;
+			border-radius: 4px;
+			font-weight: 600;
+			font-size: 12px;
+		}
+		.issue-title { font-size: 18px; font-weight: 600; }
+		.location { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 8px; }
+		.loading { margin-top: 24px; color: var(--vscode-descriptionForeground); font-size: 13px; }
+	</style>
+</head>
+<body>
+	<div class="header">
+		<span class="severity-badge">${severityLabel}</span>
+		<div>
+			<div class="issue-title">${issue.message}</div>
+			<div class="location">${issue.file}:${issue.line}:${issue.column}</div>
+		</div>
+	</div>
+	<div class="loading">Fetching AI explanation…</div>
+</body>
+</html>
+			`;
+		}
 
 		if (!explanation) {
 			// Mocked explanation shown while loading or if LLM call fails

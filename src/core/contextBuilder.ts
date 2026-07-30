@@ -239,6 +239,37 @@ async function extractDependencies(projectRoot: string): Promise<string[]> {
 }
 
 /**
+ * Formats a ProjectContext into a compact plain-text summary suitable
+ * for injecting into an LLM prompt (see llmClient.buildPrompt).
+ */
+export function formatContextForPrompt(context: ProjectContext): string {
+	const shownFiles = context.files.slice(0, 10);
+	const fileLines = shownFiles.map(f => `- ${f.path}: ${f.brief}`).join('\n') || '(no files scanned)';
+	const moreFilesNote =
+		context.files.length > shownFiles.length
+			? `\n- ... and ${context.files.length - shownFiles.length} more files`
+			: '';
+
+	const depsLine =
+		context.dependencies.length > 0 ? context.dependencies.join(', ') : 'none detected';
+
+	const topIssuesLines =
+		context.topIssues
+			.map(i => `- [${i.severity}] ${i.file}:${i.line} (${i.ruleId}) ${i.message}`)
+			.join('\n') || '(no issues detected)';
+
+	return [
+		`Project files (${context.files.length} total):`,
+		fileLines + moreFilesNote,
+		'',
+		`Dependencies: ${depsLine}`,
+		'',
+		'Top issues in the project:',
+		topIssuesLines,
+	].join('\n');
+}
+
+/**
  * Truncates text intelligently to fit within token budget
  * Preserves important code structures like imports and function signatures
  * 

@@ -14,7 +14,6 @@ dist/
 
 # VS Code
 .vscode-test/
-.vscode/
 
 # OS
 .DS_Store
