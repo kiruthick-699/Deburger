@@ -388,6 +388,17 @@ export class ExplanationPanel {
 					'Add comments explaining the logic flow',
 				],
 			},
+			'runtime-exception': {
+				problem: `An exception was thrown while the program was actually running: ${issue.message}`,
+				impact:
+					'Unlike static analysis findings, this happened live — the stack trace and variable state were captured at the exact point of failure.',
+				steps: [
+					'Check the captured variable values for anything unexpected (null, undefined, wrong type)',
+					'Trace the call stack to find where the bad value originated',
+					'Add validation or error handling at that origin point',
+					'Reproduce the failure with a test to confirm the fix',
+				],
+			},
 		};
 
 		return (

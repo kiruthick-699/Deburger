@@ -8,6 +8,7 @@ import { ExplanationPanel } from './ui/explanationPanel';
 import { DiagnosticsManager } from './ui/diagnosticsManager';
 import { ConfigManager } from './core/configManager';
 import { AnalysisIssue } from './core/types';
+import { createExceptionWatcher } from './debug/exceptionWatcher';
 
 let treeProvider: AIDebuggerTreeProvider;
 let diagnosticsManager: DiagnosticsManager;
@@ -37,44 +38,17 @@ export async function activate(context: vscode.ExtensionContext) {
 	const explainCommand = vscode.commands.registerCommand(
 		'ai-debugger.explainIssue',
 		async (issue: AnalysisIssue) => {
-			// Check if API key is configured before attempting to explain
-			const isConfigured = await ConfigManager.isApiKeyConfigured();
-			if (!isConfigured) {
-				const message =
-					'API key not configured. Configure it in extension settings to use AI explanations.';
-				const action = await vscode.window.showWarningMessage(message, 'Open Settings');
-				if (action === 'Open Settings') {
-					await ConfigManager.openApiKeySettings();
-				}
-				return;
-			}
-
-			ExplanationPanel.createOrShow(context, issue, 'loading');
-
-			try {
-				const apiKey = await ConfigManager.getApiKey();
-				if (!apiKey) {
-					throw new Error('API key not configured');
-				}
-				const provider = await ConfigManager.getProvider();
-				const model = await ConfigManager.getModel();
-
-				const explanation = await explainIssue(issue, lastContextSummary, apiKey, {
-					provider,
-					model,
-				});
-
-				ExplanationPanel.createOrShow(context, issue, explanation);
-			} catch (error) {
-				const message = error instanceof Error ? error.message : String(error);
-				vscode.window.showWarningMessage(
-					`AI explanation failed (${message}). Showing fallback guidance instead.`
-				);
-				ExplanationPanel.createOrShow(context, issue, null);
-			}
+			await explainAndShow(context, issue, lastContextSummary);
 		}
 	);
 	context.subscriptions.push(explainCommand);
+
+	// Watch live debug sessions for uncaught exceptions, and offer to explain
+	// them with the same AI explanation UI used for static analysis issues.
+	const exceptionWatcher = createExceptionWatcher((_session, issue, contextSummary) => {
+		void handleRuntimeException(context, issue, contextSummary);
+	});
+	context.subscriptions.push(exceptionWatcher);
 
 	// Dispose diagnostics manager on deactivation
 	context.subscriptions.push(diagnosticsManager);
@@ -91,6 +65,69 @@ export async function activate(context: vscode.ExtensionContext) {
 	//   // Example: track activation, analysis runs, issues found
 	//   // Never track actual code content or file names
 	// }
+}
+
+/**
+ * Checks for an API key, shows a loading state, calls the LLM, and renders
+ * the result (falling back to a local mock explanation on failure). Shared by
+ * both the sidebar "Explain This Issue" command and the live runtime
+ * exception watcher, since both just need to explain an AnalysisIssue given
+ * some context text.
+ */
+async function explainAndShow(
+	context: vscode.ExtensionContext,
+	issue: AnalysisIssue,
+	contextSummary: string
+): Promise<void> {
+	const isConfigured = await ConfigManager.isApiKeyConfigured();
+	if (!isConfigured) {
+		const message = 'API key not configured. Configure it in extension settings to use AI explanations.';
+		const action = await vscode.window.showWarningMessage(message, 'Open Settings');
+		if (action === 'Open Settings') {
+			await ConfigManager.openApiKeySettings();
+		}
+		return;
+	}
+
+	ExplanationPanel.createOrShow(context, issue, 'loading');
+
+	try {
+		const apiKey = await ConfigManager.getApiKey();
+		if (!apiKey) {
+			throw new Error('API key not configured');
+		}
+		const provider = await ConfigManager.getProvider();
+		const model = await ConfigManager.getModel();
+
+		const explanation = await explainIssue(issue, contextSummary, apiKey, { provider, model });
+
+		ExplanationPanel.createOrShow(context, issue, explanation);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		vscode.window.showWarningMessage(
+			`AI explanation failed (${message}). Showing fallback guidance instead.`
+		);
+		ExplanationPanel.createOrShow(context, issue, null);
+	}
+}
+
+/**
+ * Called when the debugger stops on an uncaught exception. Offers to explain
+ * it with AI, using the live stack trace and variable state captured at the
+ * point of failure instead of static project context.
+ */
+async function handleRuntimeException(
+	context: vscode.ExtensionContext,
+	issue: AnalysisIssue,
+	contextSummary: string
+): Promise<void> {
+	const action = await vscode.window.showErrorMessage(
+		`Unhandled exception: ${issue.message}`,
+		'Explain with AI'
+	);
+	if (action === 'Explain with AI') {
+		await explainAndShow(context, issue, contextSummary);
+	}
 }
 
 /**
@@ -119,7 +156,7 @@ async function runAnalysis(): Promise<void> {
 				progress.report({ increment: 20, message: `Found ${scannedFiles.length} files` });
 
 				// Step 2: Analyze files
-				const issues = await analyzeFiles(scannedFiles);
+				const issues = await analyzeFiles(scannedFiles, undefined, workspaceFolder.uri.fsPath);
 				progress.report({ increment: 30, message: `Found ${issues.length} issues` });
 
 				// Step 3: Build context

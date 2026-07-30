@@ -1,33 +1,42 @@
 # AI Debugging Assistant (Deburger) 🔍
 
-[![Tests](https://img.shields.io/badge/tests-106%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-124%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)]()
 [![VS Code](https://img.shields.io/badge/VS%20Code-1.85%2B-blue)]()
 
-A VS Code extension that provides intelligent debugging assistance through AST-based static analysis and AI-powered explanations.
+A VS Code extension that provides intelligent debugging assistance through static analysis and AI-powered explanations.
 
 ## 🎯 Description
 
-AI Debugging Assistant helps developers identify and understand potential issues in their JavaScript and TypeScript code. It combines Abstract Syntax Tree (AST) analysis with AI explanations to provide insights **without generating code**.
+AI Debugging Assistant helps developers identify and understand potential issues in their JavaScript and TypeScript code. It combines real static analysis tooling with AI explanations to provide insights **without generating code**.
 
 **Key Features:**
-- 🔎 AST-based static analysis with 4 built-in rules
+- 🔎 Static analysis powered by ESLint, the TypeScript compiler, and one custom AST rule
+- 🐞 Live runtime debugging: explains uncaught exceptions using the real stack trace and variable state captured at the point of failure
 - 🤖 AI-powered explanations (no code generation)
 - 📊 Visual issue browser in sidebar
 - 🎨 Inline diagnostics in editor
 - 🔒 Secure API key management
 
-## 🔧 Static Analysis Rules
+## 🐞 Live Runtime Exceptions
 
-The extension includes 4 AST-based rules:
+Static analysis can only guess at bugs from source text. This extension also watches your actual debug sessions (any VS Code debugger — Node, Python, etc.) via the Debug Adapter Protocol. When a debug session stops on an uncaught exception, it captures:
 
-### 1. **Unused Variables** (`unused-var`)
-**Severity:** Warning  
-**Detects:**
-- Unused imports
-- Declared but unused variables
-- Unused function parameters
-- Unused functions
+- The exception message and type
+- The call stack (up to 5 frames)
+- Local variable values at the top frame (via the debugger's own `scopes`/`variables` requests — no re-execution, no guessing)
+
+You'll see a notification with an **Explain with AI** action. Clicking it sends the live exception + variable state to the same AI explanation panel used for static analysis issues — but grounded in what actually happened at runtime, not just what the code looks like.
+
+This only works while a debug session is actively running and stopped on an exception (i.e. inside an Extension Development Host with a debuggee attached) — it does not scan for exceptions statically.
+
+## 🔧 Static Analysis Sources
+
+Rather than reimplementing what mature tools already do well, the extension combines ESLint, the TypeScript compiler, and one custom rule into a single issue list:
+
+### 1. **Unused Variables** (`unused-var`) — via ESLint
+**Severity:** Warning
+**Detects:** Unused imports, declared-but-unused variables, unused function parameters, unused functions. Uses ESLint's `no-unused-vars` for JS and `@typescript-eslint/no-unused-vars` for TS, so behavior matches what you'd see in your editor's Problems panel already.
 
 **Example:**
 ```javascript
@@ -35,8 +44,8 @@ const lodash = require('lodash'); // ⚠️ Warning: Unused import
 const unusedVar = 42;             // ⚠️ Warning: Never used
 ```
 
-### 2. **Long Function** (`long-function`)
-**Severity:** Info  
+### 2. **Long Function** (`long-function`) — via ESLint `max-lines-per-function`
+**Severity:** Info
 **Detects:** Functions exceeding 50 lines (configurable)
 
 **Example:**
@@ -46,20 +55,8 @@ function generateReport() {
 }
 ```
 
-### 3. **Async Without Try-Catch** (`async-no-try-catch`)
-**Severity:** Error  
-**Detects:** Async functions without error handling
-
-**Example:**
-```javascript
-async function fetchData() {
-  const res = await fetch(url);  // ❌ Error: No try-catch
-  return res.json();
-}
-```
-
-### 4. **Deep Nesting** (`deep-nesting`)
-**Severity:** Warning  
+### 3. **Deep Nesting** (`deep-nesting`) — via ESLint `max-depth`
+**Severity:** Warning
 **Detects:** Nesting depth > 4 levels (configurable)
 
 **Example:**
@@ -77,16 +74,33 @@ if (a) {
 }
 ```
 
+### 4. **Async Without Try-Catch** (`async-no-try-catch`) — custom rule
+**Severity:** Error
+**Detects:** Async functions without error handling. Kept as a hand-rolled Babel AST rule because neither ESLint core nor `@typescript-eslint` has a direct equivalent — this is the one genuinely differentiated check.
+
+**Example:**
+```javascript
+async function fetchData() {
+  const res = await fetch(url);  // ❌ Error: No try-catch
+  return res.json();
+}
+```
+
+### 5. **Type errors** (`ts****`) — via the real TypeScript compiler
+**Severity:** Error
+**Detects:** Actual type errors (wrong argument types, missing properties, etc.) using the TypeScript compiler API against your project's own `tsconfig.json`. Only runs when a `tsconfig.json` is found — no compiler options are guessed.
+
 ## 📋 MVP Scope
 
 ### Core Features
 
 - **Project Scanner**: Automatically scans workspace for JavaScript/TypeScript files
-- **AST-Based Static Analysis**: Detects common issues and anti-patterns using Abstract Syntax Tree analysis
-  - Unused variables
-  - Missing error handling in async functions
-  - Excessive function length
-  - Deep nesting complexity
+- **Static Analysis**: Combines ESLint, the TypeScript compiler, and one custom AST rule
+  - Unused variables (ESLint)
+  - Excessive function length (ESLint)
+  - Deep nesting complexity (ESLint)
+  - Missing error handling in async functions (custom rule)
+  - Real type errors (TypeScript compiler, when a tsconfig.json is present)
 
 - **Sidebar UI**: Dedicated panel showing:
   - Analysis results organized by severity
@@ -140,7 +154,7 @@ npm install
 npm run compile
 
 # 4. Run tests (optional)
-npm test  # Should show 106 tests passing
+npm test  # Should show 124 tests passing
 
 # 5. Launch Extension Development Host
 # Press F5 in VS Code, or:
@@ -217,7 +231,7 @@ The `demo-project/` folder contains intentionally flawed code to demonstrate the
 | `longFunction.js` | Function exceeding 50 lines |
 | `unusedVars.js` | Unused imports, variables, parameters, functions |
 
-**Expected Results:** ~15-20 issues across 4 categories
+**Expected Results:** ~20-25 issues across 4 categories (no `tsconfig.json` in the demo project, so TypeScript compiler diagnostics don't apply here)
 
 ## Development
 
@@ -312,11 +326,16 @@ The extension requires an LLM API key for AI-powered explanations. Configure it 
 debuggerr/
 ├── src/
 │   ├── core/              # Static analysis engine
-│   │   ├── analyzer.ts    # AST analyzer orchestrator
+│   │   ├── analyzer.ts    # Merges ESLint + tsc + custom rule output
+│   │   ├── eslintRunner.ts
+│   │   ├── tscRunner.ts
 │   │   ├── projectScanner.ts
 │   │   ├── contextBuilder.ts
 │   │   ├── configManager.ts
-│   │   └── rules/         # Analysis rules
+│   │   └── rules/         # async-no-try-catch (the one custom rule)
+│   ├── debug/             # Live runtime exception detection (DAP)
+│   │   ├── exceptionContext.ts   # DAP requests + formatting (pure, unit-testable)
+│   │   └── exceptionWatcher.ts   # vscode.debug wiring
 │   ├── ai/                # LLM integration
 │   │   ├── llmClient.ts
 │   │   └── promptTemplates.ts
@@ -338,7 +357,7 @@ npm run compile
 # Watch mode (auto-compile on save)
 npm run watch
 
-# Run tests (106 tests)
+# Run tests (124 tests)
 npm test
 
 # Lint code
@@ -373,17 +392,26 @@ npm test -- --watch
    - Explanations call the real OpenAI or Anthropic API using your configured key
    - Falls back to a locally-generated (non-AI) explanation if the API call fails
 
-3. **Basic Rule Set**
-   - Only 4 rules currently implemented
-   - No custom rule configuration UI
+3. **Rule Set**
+   - Structural checks (unused vars, nesting, function length) come from ESLint; only one check (`async-no-try-catch`) is a custom AST rule
+   - No custom rule configuration UI yet
+   - TypeScript type-error diagnostics only run when the scanned project has a `tsconfig.json`
 
 4. **Performance**
    - Full project scans on large codebases may be slow
    - No incremental analysis (re-scans entire project)
+   - Full `tsc` type-check runs once per analysis pass; can be slow on large TypeScript projects
 
 5. **No Caching**
    - Repeated analyses re-compute all issues
    - LLM responses not cached (when implemented)
+
+6. **Packaging**
+   - No bundler (esbuild/webpack) is configured yet. `npm run package` now includes production `dependencies` (ESLint, TypeScript, Babel) in the `.vsix` via `vsce`, which works but produces a larger package than a bundled build would. Bundling is a good follow-up once the extension is otherwise stable.
+
+7. **Live Exception Detection**
+   - Only fires while a debug session is actively running and paused on an uncaught exception — it doesn't scan for exceptions statically or predict them
+   - Depends on the debug adapter supporting the standard DAP `exceptionInfo`/`scopes`/`variables` requests; most do (Node, Python), but some minimal adapters may not
 
 ### Planned Improvements
 
@@ -393,6 +421,8 @@ See [Roadmap](#roadmap) below for upcoming features.
 
 ### Short-term (Next Release)
 - [x] Live LLM API integration (OpenAI, Anthropic)
+- [x] Replace duplicative custom AST rules with ESLint + real TypeScript compiler diagnostics
+- [x] Debug Adapter Protocol integration: explain live exceptions and variable state at breakpoints
 - [ ] Local LLM support (Ollama, LM Studio)
 - [ ] Caching for LLM responses
 - [ ] Incremental analysis (only changed files)
@@ -400,6 +430,7 @@ See [Roadmap](#roadmap) below for upcoming features.
 - [ ] Rule severity customization
 
 ### Medium-term
+- [ ] Bundle with esbuild for a smaller, faster-loading `.vsix`
 - [ ] Python language support
 - [ ] Java/Kotlin language support
 - [ ] Go language support
@@ -418,8 +449,9 @@ See [Roadmap](#roadmap) below for upcoming features.
 
 **Tech Stack:**
 - **Language:** TypeScript 5.3.3
-- **AST Parser:** @babel/parser, @babel/traverse
-- **Testing:** Jest (106 tests, 100% passing)
+- **Static Analysis:** ESLint (+ `@typescript-eslint`) and the TypeScript compiler API, called programmatically via the `Linter`/`ts.createProgram` APIs (no CLI shell-out)
+- **AST Parser (custom rule only):** @babel/parser, @babel/traverse
+- **Testing:** Jest (124 tests, 100% passing)
 - **CI/CD:** GitHub Actions
 - **Packaging:** @vscode/vsce
 
@@ -462,6 +494,6 @@ MIT License - see [LICENSE](LICENSE) file for details
 **Made with ❤️ by Kiruthick Kannaa**
 
 [![GitHub](https://img.shields.io/badge/GitHub-kiruthick--699-black)]()
-[![Tests](https://img.shields.io/badge/tests-106%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-124%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)]()
 

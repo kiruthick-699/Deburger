@@ -1,7 +1,10 @@
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { analyzeFiles } from './analyzer';
 
 describe('Analyzer', () => {
-	describe('unused-vars rule', () => {
+	describe('unused-var rule (via ESLint)', () => {
 		test('should detect unused variable declarations', async () => {
 			const files = [{
 				path: 'test.js',
@@ -11,36 +14,53 @@ const usedVar = 10;
 console.log(usedVar);
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
-			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-vars');
-			
+			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-var');
+
 			expect(unusedVarIssues).toHaveLength(1);
 			expect(unusedVarIssues[0].message).toContain('unusedVar');
 			expect(unusedVarIssues[0].line).toBe(2);
 			expect(unusedVarIssues[0].severity).toBe('warning');
 		});
-		
-	// Note: Function parameter tracking has scope limitations in current implementation
-	test('should detect unused variables in function scope', async () => {
-		const files = [{
-			path: 'test.js',
-			text: `
+
+		test('should detect unused variables in function scope', async () => {
+			const files = [{
+				path: 'test.js',
+				text: `
 function example() {
 	const unusedInFunction = 123;
 	const usedInFunction = 456;
 	return usedInFunction;
 }
 			`
-		}];
-		
-		const issues = await analyzeFiles(files);
-		const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-vars');
-		
-		expect(unusedVarIssues.length).toBeGreaterThanOrEqual(1);
-		const unusedIssue = unusedVarIssues.find(i => i.message.includes('unusedInFunction'));
-		expect(unusedIssue).toBeDefined();
-	});		test('should ignore variables starting with underscore', async () => {
+			}];
+
+			const issues = await analyzeFiles(files);
+			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-var');
+
+			expect(unusedVarIssues.length).toBeGreaterThanOrEqual(1);
+			const unusedIssue = unusedVarIssues.find(i => i.message.includes('unusedInFunction'));
+			expect(unusedIssue).toBeDefined();
+		});
+
+		test('should detect unused function parameters', async () => {
+			const files = [{
+				path: 'test.js',
+				text: `
+function greet(name, unusedParam) {
+	console.log(name);
+}
+				`
+			}];
+
+			const issues = await analyzeFiles(files);
+			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-var');
+
+			expect(unusedVarIssues.some(i => i.message.includes('unusedParam'))).toBe(true);
+		});
+
+		test('should ignore variables starting with underscore', async () => {
 			const files = [{
 				path: 'test.js',
 				text: `
@@ -49,36 +69,35 @@ const alsoIgnored = 10;
 console.log(alsoIgnored);
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
-			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-vars');
-			
+			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-var');
+
 			expect(unusedVarIssues).toHaveLength(0);
 		});
 	});
-	
-	describe('long-function rule', () => {
+
+	describe('long-function rule (via ESLint max-lines-per-function)', () => {
 		test('should detect functions exceeding max lines', async () => {
 			const longFunctionCode = `
 function longFunction() {
 ${Array(85).fill('  console.log("line");').join('\n')}
 }
 			`;
-			
+
 			const files = [{
 				path: 'test.js',
 				text: longFunctionCode
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const longFuncIssues = issues.filter(i => i.ruleId === 'long-function');
-			
+
 			expect(longFuncIssues).toHaveLength(1);
 			expect(longFuncIssues[0].message).toContain('longFunction');
-			expect(longFuncIssues[0].message).toMatch(/\d+ lines long/);
-			expect(longFuncIssues[0].severity).toBe('warning');
+			expect(longFuncIssues[0].severity).toBe('info');
 		});
-		
+
 		test('should not flag short functions', async () => {
 			const files = [{
 				path: 'test.js',
@@ -89,13 +108,13 @@ function shortFunction() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const longFuncIssues = issues.filter(i => i.ruleId === 'long-function');
-			
+
 			expect(longFuncIssues).toHaveLength(0);
 		});
-		
+
 		test('should respect custom max lines configuration', async () => {
 			const files = [{
 				path: 'test.js',
@@ -105,14 +124,14 @@ ${Array(15).fill('  console.log("line");').join('\n')}
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files, { maxFunctionLines: 10 });
 			const longFuncIssues = issues.filter(i => i.ruleId === 'long-function');
-			
+
 			expect(longFuncIssues).toHaveLength(1);
 		});
 	});
-	
+
 	describe('async-no-try-catch rule', () => {
 		test('should detect async functions without try/catch', async () => {
 			const files = [{
@@ -124,16 +143,17 @@ async function fetchData() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const asyncIssues = issues.filter(i => i.ruleId === 'async-no-try-catch');
-			
+
 			expect(asyncIssues).toHaveLength(1);
 			expect(asyncIssues[0].message).toContain('fetchData');
 			expect(asyncIssues[0].message).toContain('try/catch');
 			expect(asyncIssues[0].line).toBe(2);
+			expect(asyncIssues[0].severity).toBe('error');
 		});
-		
+
 		test('should not flag async functions with try/catch', async () => {
 			const files = [{
 				path: 'test.js',
@@ -148,13 +168,13 @@ async function fetchData() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const asyncIssues = issues.filter(i => i.ruleId === 'async-no-try-catch');
-			
+
 			expect(asyncIssues).toHaveLength(0);
 		});
-		
+
 		test('should detect async arrow functions without try/catch', async () => {
 			const files = [{
 				path: 'test.js',
@@ -165,15 +185,15 @@ const getData = async () => {
 };
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const asyncIssues = issues.filter(i => i.ruleId === 'async-no-try-catch');
-			
+
 			expect(asyncIssues).toHaveLength(1);
 		});
 	});
-	
-	describe('deep-nesting rule', () => {
+
+	describe('deep-nesting rule (via ESLint max-depth)', () => {
 		test('should detect excessive nesting depth', async () => {
 			const files = [{
 				path: 'test.js',
@@ -193,14 +213,14 @@ function deeplyNested() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const nestingIssues = issues.filter(i => i.ruleId === 'deep-nesting');
-			
+
 			expect(nestingIssues.length).toBeGreaterThan(0);
-			expect(nestingIssues[0].message).toContain('nesting depth');
+			expect(nestingIssues[0].message).toMatch(/nested too deeply/i);
 		});
-		
+
 		test('should not flag acceptable nesting levels', async () => {
 			const files = [{
 				path: 'test.js',
@@ -214,13 +234,13 @@ function acceptableNesting() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const nestingIssues = issues.filter(i => i.ruleId === 'deep-nesting');
-			
+
 			expect(nestingIssues).toHaveLength(0);
 		});
-		
+
 		test('should respect custom max depth configuration', async () => {
 			const files = [{
 				path: 'test.js',
@@ -236,13 +256,13 @@ function nested() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files, { maxNestingDepth: 2 });
 			const nestingIssues = issues.filter(i => i.ruleId === 'deep-nesting');
-			
+
 			expect(nestingIssues.length).toBeGreaterThan(0);
 		});
-		
+
 		test('should detect nesting in loops', async () => {
 			const files = [{
 				path: 'test.js',
@@ -262,14 +282,14 @@ function loopNesting() {
 }
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
 			const nestingIssues = issues.filter(i => i.ruleId === 'deep-nesting');
-			
+
 			expect(nestingIssues.length).toBeGreaterThan(0);
 		});
 	});
-	
+
 	describe('TypeScript support', () => {
 		test('should analyze TypeScript code', async () => {
 			const files = [{
@@ -280,15 +300,54 @@ const usedTyped: string = "hello";
 console.log(usedTyped);
 				`
 			}];
-			
+
 			const issues = await analyzeFiles(files);
-			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-vars');
-			
+			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-var');
+
 			expect(unusedVarIssues).toHaveLength(1);
 			expect(unusedVarIssues[0].message).toContain('unusedTyped');
 		});
 	});
-	
+
+	describe('TypeScript compiler diagnostics', () => {
+		let tmpDir: string;
+
+		beforeEach(() => {
+			tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-debugger-tsc-'));
+		});
+
+		afterEach(() => {
+			fs.rmSync(tmpDir, { recursive: true, force: true });
+		});
+
+		test('should surface real type errors when a tsconfig.json is present', async () => {
+			fs.writeFileSync(
+				path.join(tmpDir, 'tsconfig.json'),
+				JSON.stringify({ compilerOptions: { strict: true, noEmit: true } })
+			);
+			const filePath = path.join(tmpDir, 'bad.ts');
+			const text = 'function add(a: number, b: number): number {\n  return a + b;\n}\nadd("1", "2");\n';
+			fs.writeFileSync(filePath, text);
+
+			const issues = await analyzeFiles([{ path: filePath, text }], undefined, tmpDir);
+			const tscIssues = issues.filter(i => i.ruleId.startsWith('ts'));
+
+			expect(tscIssues.length).toBeGreaterThan(0);
+			expect(tscIssues[0].severity).toBe('error');
+		});
+
+		test('should return no compiler diagnostics without a tsconfig.json', async () => {
+			const filePath = path.join(tmpDir, 'bad.ts');
+			const text = 'function add(a: number, b: number): number {\n  return a + b;\n}\nadd("1", "2");\n';
+			fs.writeFileSync(filePath, text);
+
+			const issues = await analyzeFiles([{ path: filePath, text }], undefined, tmpDir);
+			const tscIssues = issues.filter(i => i.ruleId.startsWith('ts'));
+
+			expect(tscIssues).toHaveLength(0);
+		});
+	});
+
 	describe('multiple files', () => {
 		test('should analyze multiple files and aggregate issues', async () => {
 			const files = [
@@ -301,31 +360,31 @@ console.log(usedTyped);
 					text: 'const unused2 = 2;'
 				}
 			];
-			
+
 			const issues = await analyzeFiles(files);
-			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-vars');
-			
+			const unusedVarIssues = issues.filter(i => i.ruleId === 'unused-var');
+
 			expect(unusedVarIssues).toHaveLength(2);
 			expect(unusedVarIssues[0].file).toBe('file1.js');
 			expect(unusedVarIssues[1].file).toBe('file2.js');
 		});
 	});
-	
+
 	describe('issue format', () => {
 		test('should return JSON-serializable issues', async () => {
 			const files = [{
 				path: 'test.js',
 				text: 'const unused = 42;'
 			}];
-			
+
 			const issues = await analyzeFiles(files);
-			
+
 			expect(issues.length).toBeGreaterThan(0);
-			
+
 			// Test JSON serialization
 			const json = JSON.stringify(issues);
 			const parsed = JSON.parse(json);
-			
+
 			expect(parsed).toEqual(issues);
 			expect(parsed[0]).toHaveProperty('file');
 			expect(parsed[0]).toHaveProperty('line');
@@ -335,16 +394,16 @@ console.log(usedTyped);
 			expect(parsed[0]).toHaveProperty('severity');
 		});
 	});
-	
+
 	describe('error handling', () => {
 		test('should handle parse errors gracefully', async () => {
 			const files = [{
 				path: 'invalid.js',
 				text: 'const x = ;' // Syntax error
 			}];
-			
+
 			const issues = await analyzeFiles(files);
-			
+
 			// Should not throw, may return empty or partial results
 			expect(Array.isArray(issues)).toBe(true);
 		});

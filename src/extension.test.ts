@@ -35,6 +35,9 @@ jest.mock('vscode', () => ({
 		registerCommand: jest.fn((command, callback) => ({ dispose: jest.fn() })),
 		executeCommand: jest.fn(),
 	},
+	debug: {
+		registerDebugAdapterTrackerFactory: jest.fn(() => ({ dispose: jest.fn() })),
+	},
 	languages: {
 		createDiagnosticCollection: jest.fn(() => ({
 			clear: jest.fn(),

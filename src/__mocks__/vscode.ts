@@ -32,3 +32,7 @@ export const window = {
 export const commands = {
   registerCommand: jest.fn()
 };
+
+export const debug = {
+  registerDebugAdapterTrackerFactory: jest.fn(() => ({ dispose: jest.fn() }))
+};

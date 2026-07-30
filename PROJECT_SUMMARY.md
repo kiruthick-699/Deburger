@@ -5,7 +5,7 @@
 **Name:** AI Debugging Assistant (internal name: "Deburger")  
 **Version:** 0.1.0 (MVP)  
 **Platform:** VS Code Extension  
-**Tech Stack:** TypeScript 5.3.3, Node.js, Babel AST, Jest, GitHub Actions
+**Tech Stack:** TypeScript 5.3.3, Node.js, ESLint, TypeScript compiler API, Babel AST (custom rule only), Jest, GitHub Actions
 
 ## Core Architecture
 
@@ -15,16 +15,37 @@
   - Respects `.gitignore` patterns
   - Returns `ScannedFile[]` with file path and text content
   
-- **AST-Based Analyzer** (`analyzer.ts`)
-  - Orchestrates 4 built-in rules
+- **Analyzer** (`analyzer.ts`)
+  - Merges three issue sources into one `AnalysisIssue[]`
   - Error recovery for malformed code
   - Configurable thresholds (max function lines, nesting depth)
-  
+
+- **ESLint Runner** (`eslintRunner.ts`)
+  - Calls ESLint's `Linter` API directly (no CLI shell-out, no project `.eslintrc` dependency)
+  - `no-unused-vars` / `@typescript-eslint/no-unused-vars` → `unused-var`
+  - `max-lines-per-function` → `long-function`
+  - `max-depth` → `deep-nesting`
+  - Translates ESLint's own rule IDs back to this project's stable rule vocabulary
+
+- **TypeScript Runner** (`tscRunner.ts`)
+  - Uses `ts.createProgram` + `ts.getPreEmitDiagnostics` against the project's own `tsconfig.json`
+  - Only runs when a `tsconfig.json` is found; no compiler options are guessed
+  - Surfaces real type errors as `error`-severity issues (ruleId `ts<code>`)
+
 - **Rules** (`rules/*.ts`)
-  1. `unusedVars.ts` - Detects unused variables/imports
-  2. `longFunction.ts` - Warns on functions exceeding line threshold
-  3. `asyncNoTryCatch.ts` - Flags async functions without error handling
-  4. `deepNesting.ts` - Identifies excessive nesting depth
+  - `asyncNoTryCatch.ts` - Flags async functions without error handling. The one hand-rolled AST rule, kept because neither ESLint core nor `@typescript-eslint` has a direct equivalent.
+
+### 1a. Live Runtime Exception Detection (`debug/`)
+- **Exception Context** (`exceptionContext.ts`)
+  - Pure logic, no `vscode` dependency — fully unit-testable with a fake `customRequest`
+  - `gatherExceptionContext()` drives the standard DAP requests: `exceptionInfo` → `stackTrace` → `scopes` → `variables`
+  - `formatRuntimeContext()` turns that into plain text for the LLM context slot
+  - `toSyntheticIssue()` maps it onto the same `AnalysisIssue` shape static analysis produces (`ruleId: 'runtime-exception'`), so it flows through the existing sidebar/diagnostics/explain UI unchanged
+- **Exception Watcher** (`exceptionWatcher.ts`)
+  - Thin `vscode.debug.registerDebugAdapterTrackerFactory('*', ...)` wiring
+  - Watches every debug session (any debug type) for a `stopped` event with `reason: 'exception'`
+  - On such a stop, calls `gatherExceptionContext()` and hands the result to a callback registered by `extension.ts`
+- **extension.ts** wires this to `handleRuntimeException()`, which shows a notification with an "Explain with AI" action that reuses the same `explainAndShow()` helper as the sidebar's "Explain This Issue" command
 
 ### 2. AI Integration
 - **Prompt Templates** (`promptTemplates.ts`)
@@ -70,13 +91,15 @@
 
 ## Testing Strategy
 
-### Unit Tests (76 tests)
+### Unit Tests (94 tests)
 1. `projectScanner.test.ts` (9 tests) - File discovery, .gitignore
-2. `analyzer.test.ts` (17 tests) - AST parsing, error recovery
+2. `analyzer.test.ts` (20 tests) - ESLint-sourced rules, custom async rule, real tsc diagnostics, error recovery
 3. `contextBuilder.test.ts` (18 tests) - Context generation, dependency extraction
 4. `llmClient.test.ts` (21 tests) - Prompt formatting, no-code constraint
 5. `extension.test.ts` (2 tests) - Activation, command registration
 6. `ui.test.ts` (9 tests) - TreeView, diagnostics, explanation panel
+7. `exceptionContext.test.ts` (11 tests) - DAP request orchestration, formatting, synthetic issue mapping
+8. `exceptionWatcher.test.ts` (4 tests) - Tracker registration, exception-stop detection, graceful degradation
 
 ### Integration Tests (15 tests)
 - `integration.test.ts` - Full pipeline validation
@@ -90,7 +113,7 @@
 - Telemetry opt-out logic
 - Settings UI prompts
 
-**Total: 106 tests passing**
+**Total: 124 tests passing**
 
 ## Build & Deployment
 
@@ -110,7 +133,8 @@
 ### Packaging
 - `@vscode/vsce` for extension packaging
 - `.vscodeignore` excludes source/test files
-- Optimized for distribution
+- ESLint, TypeScript, and Babel are now real `dependencies` (not `devDependencies`), since the analyzer needs them at runtime; `npm run package` no longer passes `--no-dependencies`, so they're actually included in the `.vsix`. Previously they were devDependencies with `--no-dependencies` set, which would have shipped a broken package.
+- No bundler yet — a future esbuild pass would shrink the package size
 
 ## Security & Privacy
 
@@ -135,7 +159,7 @@
 ## MVP Constraints
 
 ### What it DOES
-✅ Analyze code for issues (4 rules)  
+✅ Analyze code for issues (ESLint + TypeScript compiler + 1 custom rule)  
 ✅ Explain problems (no code generation)  
 ✅ Provide context summaries  
 ✅ Display issues in sidebar/diagnostics  
@@ -153,7 +177,8 @@ debuggerr/
 ├── .github/workflows/     # CI/CD
 ├── .vscode/              # Launch config
 ├── src/
-│   ├── core/            # Scanner, analyzer, rules, config
+│   ├── core/            # Scanner, analyzer, ESLint/tsc runners, rules, config
+│   ├── debug/           # Live runtime exception detection (DAP)
 │   ├── ai/              # LLM client, prompts
 │   ├── ui/              # Sidebar, diagnostics, explanation panel
 │   ├── __fixtures__/    # Test fixtures
@@ -174,37 +199,41 @@ debuggerr/
 5. `feat: add context builder for LLM summaries`
 6. `feat: add LLM client with no-code constraint`
 7. `feat: add polished UI (sidebar, diagnostics, explanation)`
-8. `feat: add API key config, integration tests, packaging` ← CURRENT
+8. `feat: add API key config, integration tests, packaging`
+9. `feat: wire real LLM API calls, fix F5 debug launch`
+10. `feat: replace custom AST rules with ESLint + TypeScript compiler diagnostics`
+11. `feat: watch live debug sessions for uncaught exceptions via DAP` ← CURRENT
 
 ## Future Roadmap
 - [x] Live LLM API integration (OpenAI, Anthropic)
+- [x] Replace duplicative AST rules with ESLint + real tsc diagnostics
+- [x] Debug Adapter Protocol integration: explain live exceptions/variable state at breakpoints
+- [ ] Bundle with esbuild for a smaller `.vsix`
 - [ ] Local LLM support (Ollama, LM Studio)
 - [ ] Custom rule configuration UI
 - [ ] Support for Python, Java, Go
 - [ ] Performance optimization (incremental analysis)
 - [ ] Team-shared analysis profiles
-- [ ] Local LLM support (Ollama, LM Studio)
 
 ## Key Design Decisions
 
 1. **No code generation** - Strict MVP constraint for AI features
-2. **Mock LLM by default** - Avoids API costs/limits during testing
-3. **AST-based analysis** - More reliable than regex patterns
-4. **Modular rules** - Easy to add custom rules later
+2. **Live LLM by default** - OpenAI/Anthropic behind a provider setting; falls back to a local mock explanation on failure
+3. **Delegate commodity checks to ESLint/tsc** - Unused vars, nesting depth, and function length are already solved problems; only `async-no-try-catch` is a custom AST rule, since it's the one check without a mature-tool equivalent
+4. **Runtime exceptions reuse the static-analysis UI** - A live exception is mapped onto the same `AnalysisIssue` shape (ruleId `runtime-exception`) instead of building a parallel UI, so the sidebar/diagnostics/explain-with-AI flow needed zero new UI code
 5. **Secure config** - API keys never exposed in logs/errors
-6. **Test-first** - 106 tests before first release
+6. **Test-first** - 124 tests before this release
 7. **TypeScript strict mode** - Full type safety
 
 ## Dependencies
 
 ### Production
-- `@babel/parser` - AST parsing
-- `@babel/traverse` - AST traversal
+- `@babel/parser` / `@babel/traverse` - AST parsing for the one custom rule
+- `eslint` + `@typescript-eslint/parser` + `@typescript-eslint/eslint-plugin` - Static analysis engine
+- `typescript` - Compiler API for real type-error diagnostics
 
 ### Development
-- `typescript` - Language & compilation
 - `jest` + `ts-jest` - Testing framework
-- `eslint` - Code linting
 - `@vscode/vsce` - Extension packaging
 - `@types/*` - Type definitions
 
@@ -215,7 +244,7 @@ git clone https://github.com/kiruthick-699/Deburger.git
 cd debuggerr
 npm install
 npm run compile
-npm test  # Should show 106 passing tests
+npm test  # Should show 124 passing tests
 ```
 
 ## Running in VS Code
@@ -228,7 +257,7 @@ npm test  # Should show 106 passing tests
 
 ---
 
-**Project Status:** ✅ MVP Complete  
-**Test Coverage:** 106 tests passing  
-**Last Updated:** 2025  
+**Project Status:** ✅ MVP Complete, real LLM + real static analysis wired  
+**Test Coverage:** 124 tests passing  
+**Last Updated:** 2026-07-30  
 **Maintainer:** Kiruthick Kannaa

@@ -90,7 +90,7 @@ function checkForTryCatch(
 			column: node.loc.start.column,
 			ruleId: 'async-no-try-catch',
 			message: `Async function '${functionName}' should have try/catch error handling`,
-			severity: 'warning'
+			severity: 'error'
 		});
 	}
 }

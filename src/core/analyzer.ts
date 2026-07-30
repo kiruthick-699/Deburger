@@ -1,22 +1,13 @@
 import { parse } from '@babel/parser';
-import { AnalysisIssue, Rule, RuleConfig } from './types';
-import { unusedVarsRule } from './rules/unusedVars';
-import { longFunctionRule } from './rules/longFunction';
+import { AnalysisIssue, RuleConfig } from './types';
 import { asyncNoTryCatchRule } from './rules/asyncNoTryCatch';
-import { deepNestingRule } from './rules/deepNesting';
+import { lintFile } from './eslintRunner';
+import { getTypeScriptDiagnostics } from './tscRunner';
 
 const DEFAULT_CONFIG: RuleConfig = {
-	maxFunctionLines: 80,
+	maxFunctionLines: 50,
 	maxNestingDepth: 4
 };
-
-// Registry of all rules
-const RULES: Rule[] = [
-	unusedVarsRule,
-	longFunctionRule,
-	asyncNoTryCatchRule,
-	deepNestingRule
-];
 
 export interface FileInput {
 	path: string;
@@ -24,62 +15,73 @@ export interface FileInput {
 }
 
 /**
- * Analyzes multiple files using all registered rules
+ * Analyzes multiple files by combining three issue sources:
+ * - ESLint (unused vars, nesting depth, function length) — commodity checks a
+ *   mature linter already does well, so we don't re-implement them as AST rules
+ * - The TypeScript compiler (real type errors), when the project has a tsconfig.json
+ * - A single hand-rolled rule (async-no-try-catch) that neither of the above covers
  * @param files - Array of files to analyze
  * @param config - Optional configuration for rule thresholds
+ * @param rootPath - Project root, used to locate tsconfig.json for compiler diagnostics
  * @returns Array of analysis issues found across all files
  */
 export async function analyzeFiles(
 	files: FileInput[],
-	config: RuleConfig = DEFAULT_CONFIG
+	config: RuleConfig = DEFAULT_CONFIG,
+	rootPath?: string
 ): Promise<AnalysisIssue[]> {
 	const allIssues: AnalysisIssue[] = [];
-	
+
 	for (const file of files) {
 		try {
-			const issues = await analyzeFile(file, config);
-			allIssues.push(...issues);
+			allIssues.push(...analyzeFile(file, config));
 		} catch (error) {
 			console.warn(`Error analyzing file ${file.path}:`, error);
 			// Continue with other files even if one fails
 		}
 	}
-	
+
+	if (rootPath) {
+		try {
+			allIssues.push(...getTypeScriptDiagnostics(rootPath, files.map(f => f.path)));
+		} catch (error) {
+			console.warn(`Error running TypeScript diagnostics for ${rootPath}:`, error);
+		}
+	}
+
 	return allIssues;
 }
 
 /**
- * Analyzes a single file using all registered rules
+ * Analyzes a single file: ESLint for commodity checks, plus the custom
+ * async-no-try-catch rule via a Babel AST (TypeScript diagnostics run
+ * separately, once per project, in analyzeFiles).
  */
-async function analyzeFile(
-	file: FileInput,
-	config: RuleConfig
-): Promise<AnalysisIssue[]> {
+function analyzeFile(file: FileInput, config: RuleConfig): AnalysisIssue[] {
 	const issues: AnalysisIssue[] = [];
-	
-	// Parse the file to an AST
+
+	issues.push(
+		...lintFile(file.path, file.text, {
+			maxFunctionLines: config.maxFunctionLines || 50,
+			maxNestingDepth: config.maxNestingDepth || 4,
+		})
+	);
+
 	const ast = parseCode(file.text, file.path);
-	
-	if (!ast) {
-		return issues; // Failed to parse, skip this file
-	}
-	
-	// Run all rules against the AST
-	for (const rule of RULES) {
+	if (ast) {
 		try {
-			const ruleIssues = rule.run(ast, file.path, file.text, config);
-			issues.push(...ruleIssues);
+			issues.push(...asyncNoTryCatchRule.run(ast, file.path, file.text, config));
 		} catch (error) {
 			console.warn(`Rule execution error in ${file.path}:`, error);
 		}
 	}
-	
+
 	return issues;
 }
 
 /**
- * Parses source code into an AST
- * Uses Babel parser with TypeScript and JSX support
+ * Parses source code into an AST.
+ * Uses Babel parser with TypeScript and JSX support.
  */
 function parseCode(code: string, filePath: string) {
 	try {
