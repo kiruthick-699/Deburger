@@ -1,9 +1,18 @@
 {
   "name": "ai-debugging-assistant",
   "displayName": "AI Debugging Assistant",
-  "description": "MVP: Static analysis with AST-based rules and AI-powered explanations (no code generation)",
+  "description": "Static analysis (ESLint + TypeScript compiler), live exception detection (DAP), and AI-powered explanations — no code generation.",
   "version": "0.1.0",
   "publisher": "yourpublisher",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kiruthick01/Deburger.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kiruthick01/Deburger/issues"
+  },
+  "homepage": "https://github.com/kiruthick01/Deburger#readme",
   "engines": {
     "vscode": "^1.85.0"
   },

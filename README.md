@@ -1,137 +1,125 @@
-# AI Debugging Assistant (Deburger) 🔍
+# 🔍 AI Debugging Assistant (Deburger)
+
+**A VS Code extension that actually analyzes your code — with real tools, not reinvented ones — and explains what it finds using AI, without ever writing code for you.**
 
 [![Tests](https://img.shields.io/badge/tests-124%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)]()
 [![VS Code](https://img.shields.io/badge/VS%20Code-1.85%2B-blue)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A VS Code extension that provides intelligent debugging assistance through static analysis and AI-powered explanations.
+---
 
-## 🎯 Description
+## Table of Contents
 
-AI Debugging Assistant helps developers identify and understand potential issues in their JavaScript and TypeScript code. It combines real static analysis tooling with AI explanations to provide insights **without generating code**.
+- [Why this exists](#why-this-exists)
+- [What it does](#what-it-does)
+- [Architecture](#architecture)
+- [Sample output](#sample-output)
+- [Quick Start](#-quick-start)
+- [Usage](#-usage)
+- [Configuration](#️-configuration)
+- [Demo project](#-demo-project)
+- [Development](#️-development)
+- [Deployment](#-deployment)
+- [Known Limitations](#-known-limitations)
+- [Roadmap](#️-roadmap)
+- [Technical Details](#-technical-details)
+- [Contributing](#-contributing)
+- [License](#-license)
 
-**Key Features:**
-- 🔎 Static analysis powered by ESLint, the TypeScript compiler, and one custom AST rule
-- 🐞 Live runtime debugging: explains uncaught exceptions using the real stack trace and variable state captured at the point of failure
-- 🤖 AI-powered explanations (no code generation)
-- 📊 Visual issue browser in sidebar
-- 🎨 Inline diagnostics in editor
-- 🔒 Secure API key management
+---
 
-## 🐞 Live Runtime Exceptions
+## Why this exists
 
-Static analysis can only guess at bugs from source text. This extension also watches your actual debug sessions (any VS Code debugger — Node, Python, etc.) via the Debug Adapter Protocol. When a debug session stops on an uncaught exception, it captures:
+Most "AI code assistants" either generate code you didn't ask for, or reimplement a worse version of ESLint. This extension deliberately does neither:
 
-- The exception message and type
-- The call stack (up to 5 frames)
-- Local variable values at the top frame (via the debugger's own `scopes`/`variables` requests — no re-execution, no guessing)
+- **No code generation.** Ever. It explains problems in plain English; it never writes or suggests a fix. That constraint is enforced in the prompt template itself, not just documentation.
+- **No reinvented linting.** Unused variables, deep nesting, and long functions are solved problems — this extension calls ESLint's `Linter` API and the real TypeScript compiler directly, instead of hand-rolling a worse AST walker for things a mature tool already does well.
+- **Grounded in what actually happened, not just what the code looks like.** Static analysis can only guess. This extension also watches live debug sessions via the Debug Adapter Protocol, so when your program throws, it can explain the *actual* stack trace and *actual* variable values at the moment of failure — not a guess.
 
-You'll see a notification with an **Explain with AI** action. Clicking it sends the live exception + variable state to the same AI explanation panel used for static analysis issues — but grounded in what actually happened at runtime, not just what the code looks like.
+## What it does
 
-This only works while a debug session is actively running and stopped on an exception (i.e. inside an Extension Development Host with a debuggee attached) — it does not scan for exceptions statically.
+| Capability | Source | Severity |
+|---|---|---|
+| Unused variables, imports, params, functions | ESLint (`no-unused-vars` / `@typescript-eslint/no-unused-vars`) | Warning |
+| Functions exceeding 50 lines | ESLint (`max-lines-per-function`) | Info |
+| Nesting depth > 4 levels | ESLint (`max-depth`) | Warning |
+| Async functions missing try/catch | Custom Babel AST rule — the one check with no ESLint equivalent | Error |
+| Real type errors (wrong arg types, missing properties, etc.) | TypeScript compiler (`ts.createProgram`), when a `tsconfig.json` exists | Error |
+| Live uncaught exceptions with stack trace + variable state | Debug Adapter Protocol (`exceptionInfo`/`stackTrace`/`scopes`/`variables`) | Error |
+| Plain-English explanations of any of the above | OpenAI or Anthropic, via a prompt that explicitly forbids code output | — |
 
-## 🔧 Static Analysis Sources
+**What it will never do:** generate code fixes, auto-refactor, write new functions, or offer autocomplete. If you're looking for that, this isn't it — by design.
 
-Rather than reimplementing what mature tools already do well, the extension combines ESLint, the TypeScript compiler, and one custom rule into a single issue list:
+## Architecture
 
-### 1. **Unused Variables** (`unused-var`) — via ESLint
-**Severity:** Warning
-**Detects:** Unused imports, declared-but-unused variables, unused function parameters, unused functions. Uses ESLint's `no-unused-vars` for JS and `@typescript-eslint/no-unused-vars` for TS, so behavior matches what you'd see in your editor's Problems panel already.
+```mermaid
+flowchart TB
+    subgraph Static["Static Analysis (on demand)"]
+        Scanner["Project Scanner<br/>(fs walk, respects .gitignore)"]
+        ESLint["ESLint Runner<br/>(Linter API)"]
+        Tsc["TypeScript Runner<br/>(ts.createProgram)"]
+        Custom["async-no-try-catch<br/>(Babel AST rule)"]
+        Analyzer["Analyzer<br/>(merges all sources)"]
+        Scanner --> ESLint --> Analyzer
+        Scanner --> Custom --> Analyzer
+        Tsc --> Analyzer
+    end
 
-**Example:**
-```javascript
-const lodash = require('lodash'); // ⚠️ Warning: Unused import
-const unusedVar = 42;             // ⚠️ Warning: Never used
+    subgraph Runtime["Live Debugging (event-driven)"]
+        DAP["Debug Adapter Protocol<br/>(vscode.debug tracker)"]
+        ExcCtx["exceptionInfo + stackTrace<br/>+ scopes + variables"]
+        DAP --> ExcCtx
+    end
+
+    Analyzer --> Issue["AnalysisIssue[]"]
+    ExcCtx --> Issue
+
+    Issue --> UI["Sidebar / Problems Panel / Diagnostics"]
+    Issue --> Explain["explainIssue()"]
+    Explain --> LLM["OpenAI or Anthropic<br/>(no-code-generation prompt)"]
+    LLM --> Panel["Explanation WebView Panel"]
 ```
 
-### 2. **Long Function** (`long-function`) — via ESLint `max-lines-per-function`
-**Severity:** Info
-**Detects:** Functions exceeding 50 lines (configurable)
+The key design choice: a live runtime exception is mapped onto the exact same `AnalysisIssue` shape a static analysis finding produces. That's why the diagram converges — one UI, one explain pipeline, two very different sources of truth feeding it.
 
-**Example:**
-```javascript
-function generateReport() {
-  // ... 60 lines of code ...  // ℹ️ Info: Function too long
-}
+## Sample output
+
+### Real analysis run against the bundled demo project
+
+```
+$ node -e "... scanProject + analyzeFiles against demo-project/ ..."
+
+Analysis complete: 22 issues found
+  errors: 4  warnings: 17  info: 1
+
+  [warning] demo-project/deepNesting.js:8  (deep-nesting)
+      Blocks are nested too deeply (5). Maximum allowed is 4.
+  [warning] demo-project/index.js:5  (unused-var)
+      'lodash' is assigned a value but never used. Allowed unused vars must match /^_/u.
+  [error]   demo-project/index.js:17  (async-no-try-catch)
+      Async function 'fetchUserData' should have try/catch error handling
+  [info]    demo-project/longFunction.js:3  (long-function)
+      Function 'generateComprehensiveReport' has too many lines (71). Maximum allowed is 50.
+  [warning] demo-project/unusedVars.js:22  (unused-var)
+      'middleName' is defined but never used. Allowed unused args must match /^_/u.
+  ... (17 more)
 ```
 
-### 3. **Deep Nesting** (`deep-nesting`) — via ESLint `max-depth`
-**Severity:** Warning
-**Detects:** Nesting depth > 4 levels (configurable)
+### Real test suite run
 
-**Example:**
-```javascript
-if (a) {
-  if (b) {
-    if (c) {
-      if (d) {
-        if (e) {              // ⚠️ Warning: Too deeply nested
-          // code here
-        }
-      }
-    }
-  }
-}
+```
+$ npm test
+
+Test Suites: 10 passed, 10 total
+Tests:       124 passed, 124 total
+Snapshots:   0 total
+Time:        9.2s
 ```
 
-### 4. **Async Without Try-Catch** (`async-no-try-catch`) — custom rule
-**Severity:** Error
-**Detects:** Async functions without error handling. Kept as a hand-rolled Babel AST rule because neither ESLint core nor `@typescript-eslint` has a direct equivalent — this is the one genuinely differentiated check.
+### Screenshots
 
-**Example:**
-```javascript
-async function fetchData() {
-  const res = await fetch(url);  // ❌ Error: No try-catch
-  return res.json();
-}
-```
-
-### 5. **Type errors** (`ts****`) — via the real TypeScript compiler
-**Severity:** Error
-**Detects:** Actual type errors (wrong argument types, missing properties, etc.) using the TypeScript compiler API against your project's own `tsconfig.json`. Only runs when a `tsconfig.json` is found — no compiler options are guessed.
-
-## 📋 MVP Scope
-
-### Core Features
-
-- **Project Scanner**: Automatically scans workspace for JavaScript/TypeScript files
-- **Static Analysis**: Combines ESLint, the TypeScript compiler, and one custom AST rule
-  - Unused variables (ESLint)
-  - Excessive function length (ESLint)
-  - Deep nesting complexity (ESLint)
-  - Missing error handling in async functions (custom rule)
-  - Real type errors (TypeScript compiler, when a tsconfig.json is present)
-
-- **Sidebar UI**: Dedicated panel showing:
-  - Analysis results organized by severity
-  - Issue count badges
-  - Quick navigation to problem locations
-  - Click-to-explain functionality
-
-- **Inline Diagnostics**: Real-time issue highlighting in the editor
-  - Squiggly underlines for detected issues
-  - Hover tooltips with issue descriptions
-  - Integration with VS Code's Problems panel
-
-- **AI-Powered Explanations**: LLM integration for understanding issues
-  - Explain why a detected issue matters
-  - Provide context about best practices
-  - Suggest conceptual approaches to fixing problems
-  - **CONSTRAINT: NO code generation** - explanations only
-
-### What This Extension Does
-
-✅ **Analyze** existing code for issues  
-✅ **Explain** problems and their implications  
-✅ **Guide** developers with explanations  
-✅ **Highlight** areas needing attention  
-
-### What This Extension Does NOT Do
-
-❌ Generate code fixes automatically  
-❌ Apply refactoring transformations  
-❌ Write new code or functions  
-❌ Auto-complete or suggest code snippets
+The sidebar tree view, inline squiggles, and AI explanation webview panel only render inside a live VS Code window — they can't be captured from a terminal-driven environment. If you'd like them here, run the extension via `F5` (see Quick Start below), grab screenshots of the **AI Debugger** sidebar and the explanation panel, and drop them in a `media/` folder — happy to wire them into this README on request.
 
 ## 🚀 Quick Start
 
@@ -144,7 +132,7 @@ async function fetchData() {
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/kiruthick-699/Deburger.git
+git clone https://github.com/kiruthick01/Deburger.git
 cd debuggerr
 
 # 2. Install dependencies
@@ -212,52 +200,17 @@ code demo-project/
 3. View detailed explanation in the panel
 4. *Note: Requires API key configuration (see Configuration section)*
 
-## 🎨 Screenshots
+### Live Exception Detection
 
-> *Screenshots will be added here showing:*
-> - Sidebar with detected issues
-> - Inline diagnostics in editor
-> - AI explanation panel
-> - Problems panel integration
+This extension also watches your actual debug sessions (any VS Code debugger — Node, Python, etc.) via the Debug Adapter Protocol. When a debug session stops on an uncaught exception, it captures:
 
-## 🧪 Demo Project
+- The exception message and type
+- The call stack (up to 5 frames)
+- Local variable values at the top frame (via the debugger's own `scopes`/`variables` requests — no re-execution, no guessing)
 
-The `demo-project/` folder contains intentionally flawed code to demonstrate the extension:
+You'll see a notification with an **Explain with AI** action. Clicking it sends the live exception + variable state to the same AI explanation panel used for static analysis issues — but grounded in what actually happened at runtime.
 
-| File | Issues Demonstrated |
-|------|---------------------|
-| `index.js` | Async without try-catch, unused imports/variables |
-| `deepNesting.js` | Excessive nesting (5-6 levels) |
-| `longFunction.js` | Function exceeding 50 lines |
-| `unusedVars.js` | Unused imports, variables, parameters, functions |
-
-**Expected Results:** ~20-25 issues across 4 categories (no `tsconfig.json` in the demo project, so TypeScript compiler diagnostics don't apply here)
-
-## Development
-
-### Build
-
-```bash
-npm run compile
-```
-
-### Watch Mode
-
-```bash
-npm run watch
-```
-
-### Test
-
-```bash
-npm test
-```
-
-### Lint
-
-```bash
-npm run lint
-```
+This only works while a debug session is actively running and paused on an exception — it does not scan for exceptions statically, and it depends on the debug adapter supporting standard DAP `exceptionInfo` (most do).
 
 ## ⚙️ Configuration
 
@@ -305,6 +258,7 @@ The extension requires an LLM API key for AI-powered explanations. Configure it 
 - Code snippets around detected issues (±5 lines context)
 - Issue descriptions and metadata
 - Project dependency information (from package.json)
+- For live exceptions: the stack trace and local variable values captured at the point of failure
 
 **What does NOT get sent:**
 - Your entire codebase
@@ -317,6 +271,19 @@ The extension requires an LLM API key for AI-powered explanations. Configure it 
 - ✅ Consider self-hosted LLM solutions for proprietary code
 - ✅ Remove API key when not needed
 - ✅ Use on non-sensitive projects if uncertain
+
+## 🧪 Demo Project
+
+The `demo-project/` folder contains intentionally flawed code to demonstrate the extension:
+
+| File | Issues Demonstrated |
+|------|---------------------|
+| `index.js` | Async without try-catch, unused imports/variables |
+| `deepNesting.js` | Excessive nesting (5-6 levels) |
+| `longFunction.js` | Function exceeding 50 lines |
+| `unusedVars.js` | Unused imports, variables, parameters, functions |
+
+**Expected Results:** 22 issues (4 errors, 17 warnings, 1 info) — see [Sample output](#sample-output) above for the real run. No `tsconfig.json` in the demo project, so TypeScript compiler diagnostics don't apply here.
 
 ## 🛠️ Development
 
@@ -363,7 +330,7 @@ npm test
 # Lint code
 npm run lint
 
-# Package extension
+# Package extension (.vsix)
 npm run package
 ```
 
@@ -379,6 +346,66 @@ npm test -- analyzer
 # Watch mode
 npm test -- --watch
 ```
+
+## 📦 Deployment
+
+This is a VS Code extension, not a web app — "deploying" it means packaging a `.vsix` and getting it installed, either publicly (Marketplace) or privately (a file you hand someone). All four paths below start with the same build:
+
+```bash
+npm run package
+# → ai-debugging-assistant-0.1.0.vsix (verified working: ~10MB, 3849 files)
+```
+
+> **Note:** no bundler is configured yet, so the `.vsix` ships ESLint/TypeScript/Babel unbundled from `node_modules` — functional, but larger than it needs to be. See [Known Limitations](#-known-limitations).
+
+### Option A — VS Code Marketplace (public, most reach)
+
+```bash
+npm install -g @vscode/vsce
+
+# One-time: create a publisher at https://marketplace.visualstudio.com/manage
+# (needs an Azure DevOps Personal Access Token)
+vsce create-publisher <your-publisher-id>
+
+# Update "publisher" in package.json from the "yourpublisher" placeholder
+# to your real publisher id, then:
+vsce login <your-publisher-id>
+vsce publish
+```
+
+Once published, anyone can install it via the Marketplace UI or `ext install <publisher>.ai-debugging-assistant`.
+
+### Option B — Open VSX Registry (open-source, powers VSCodium/Gitpod/Theia)
+
+```bash
+npx ovsx create-namespace <namespace> -p <open-vsx-token>
+npx ovsx publish -p <open-vsx-token>
+```
+
+Worth doing alongside the Marketplace if you want reach beyond Microsoft's VS Code build.
+
+### Option C — GitHub Releases (no publisher account needed)
+
+```bash
+npm run package
+gh release create v0.1.0 ai-debugging-assistant-0.1.0.vsix --title "v0.1.0"
+```
+
+Anyone can then install it without any account: Extensions panel → `...` menu → **Install from VSIX**, or:
+```bash
+code --install-extension ai-debugging-assistant-0.1.0.vsix
+```
+
+### Option D — Local-only, for yourself or your team
+
+```bash
+npm run package
+code --install-extension ai-debugging-assistant-0.1.0.vsix
+```
+
+No registry, no account, no internet required after the initial build.
+
+**Before publishing publicly (Options A/B):** update the `publisher` field in `package.json` (currently a placeholder), and consider bundling with esbuild first — a 10MB extension is unusual for the Marketplace and it's the top thing `vsce package` itself warns about.
 
 ## 🐛 Known Limitations
 
@@ -407,7 +434,8 @@ npm test -- --watch
    - LLM responses not cached (when implemented)
 
 6. **Packaging**
-   - No bundler (esbuild/webpack) is configured yet. `npm run package` now includes production `dependencies` (ESLint, TypeScript, Babel) in the `.vsix` via `vsce`, which works but produces a larger package than a bundled build would. Bundling is a good follow-up once the extension is otherwise stable.
+   - No bundler (esbuild/webpack) configured yet. `npm run package` produces a working but ~10MB `.vsix` since ESLint/TypeScript/Babel ship unbundled from `node_modules`. Functional (verified — see [Deployment](#-deployment)), but a bundler pass would shrink this significantly before a public Marketplace release.
+   - `publisher` in `package.json` is still the scaffold placeholder — must be set to a real publisher id before Marketplace/Open VSX publishing.
 
 7. **Live Exception Detection**
    - Only fires while a debug session is actively running and paused on an uncaught exception — it doesn't scan for exceptions statically or predict them
@@ -415,7 +443,7 @@ npm test -- --watch
 
 ### Planned Improvements
 
-See [Roadmap](#roadmap) below for upcoming features.
+See [Roadmap](#️-roadmap) below for upcoming features.
 
 ## 🗺️ Roadmap
 
@@ -431,6 +459,7 @@ See [Roadmap](#roadmap) below for upcoming features.
 
 ### Medium-term
 - [ ] Bundle with esbuild for a smaller, faster-loading `.vsix`
+- [ ] Publish to VS Code Marketplace + Open VSX
 - [ ] Python language support
 - [ ] Java/Kotlin language support
 - [ ] Go language support
@@ -450,6 +479,7 @@ See [Roadmap](#roadmap) below for upcoming features.
 **Tech Stack:**
 - **Language:** TypeScript 5.3.3
 - **Static Analysis:** ESLint (+ `@typescript-eslint`) and the TypeScript compiler API, called programmatically via the `Linter`/`ts.createProgram` APIs (no CLI shell-out)
+- **Live Debugging:** Debug Adapter Protocol, via `vscode.debug.registerDebugAdapterTrackerFactory`
 - **AST Parser (custom rule only):** @babel/parser, @babel/traverse
 - **Testing:** Jest (124 tests, 100% passing)
 - **CI/CD:** GitHub Actions
@@ -460,6 +490,7 @@ See [Roadmap](#roadmap) below for upcoming features.
 - Diagnostics API (inline squiggles)
 - WebView API (explanation panel)
 - Configuration API (settings)
+- Debug Adapter Tracker API (live exception detection)
 
 ## 📝 Contributing
 
@@ -475,6 +506,7 @@ Contributions are welcome! Please:
 
 **Guidelines:**
 - Maintain the "no code generation" constraint for AI features
+- Prefer delegating to a mature tool (ESLint, tsc) over a new hand-rolled rule
 - Add tests for all new rules or features
 - Follow existing code style (ESLint)
 - Update documentation
@@ -486,14 +518,12 @@ MIT License - see [LICENSE](LICENSE) file for details
 ## 🙏 Acknowledgments
 
 - VS Code Extension API documentation
+- ESLint and TypeScript compiler teams
 - Babel AST parser community
-- OpenAI for LLM capabilities
 
 ---
 
 **Made with ❤️ by Kiruthick Kannaa**
 
-[![GitHub](https://img.shields.io/badge/GitHub-kiruthick--699-black)]()
 [![Tests](https://img.shields.io/badge/tests-124%20passing-brightgreen)]()
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3-blue)]()
-
